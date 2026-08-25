@@ -1,0 +1,17 @@
+# Reconstruction data: images, point clouds and meshes are large and are never
+# committed. Everything under data/ is reproducible from the capture set plus a
+# config, which is the point of the run-directory layout.
+data/
+
+# Colab hand-off bundles
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
