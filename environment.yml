@@ -1,0 +1,46 @@
+# Khon mask 3D reconstruction environment.
+#
+# Python is pinned to 3.11 deliberately: Open3D 0.19.0 publishes
+# macosx_*_universal2 wheels for cp310/cp311/cp312 ONLY. On Python 3.13/3.14
+# (the system Python on this machine is 3.14) there is no Open3D wheel at all
+# and the whole meshing stage becomes uninstallable.
+#
+#   conda env create -f environment.yml
+#   conda activate khon
+#
+# The COLMAP *binary* is installed separately and is not a Python package:
+#   brew install colmap      # 4.1.1, arm64 bottle
+#
+name: khon
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      # --- geometry / reconstruction ---
+      - open3d==0.19.0
+      - pycolmap==4.1.1      # version-matched to the brew COLMAP CLI
+      - trimesh
+      - plyfile
+      # --- imaging ---
+      # pinned <5 : the OpenCV 5.x line is new and this code uses the 4.x
+      # feature/GrabCut APIs that are well understood.
+      - opencv-python>=4.10,<5
+      - scikit-image
+      - pillow
+      # --- numerics / plotting ---
+      - numpy
+      - scipy
+      - matplotlib
+      # --- plumbing ---
+      - pyyaml
+      - tqdm
+      # --- texturing (optional but wheels exist for arm64/py3.11) ---
+      - xatlas
+      - pymeshlab
+      # --- foreground masking ---
+      # rembg pulls onnxruntime + model downloads. If it causes trouble the
+      # pipeline falls back to OpenCV GrabCut (see khon_recon/masking.py).
+      - rembg
+      - onnxruntime

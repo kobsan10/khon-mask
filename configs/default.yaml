@@ -1,0 +1,82 @@
+# Baseline configuration. Every value here matches the dataclass defaults in
+# khon_recon/config.py; it is written out so the tunables are visible in one
+# place and so subject configs have something to `extends:`.
+#
+# Each run copies its fully-resolved config into data/runs/<run_id>/config.yaml,
+# so any number in the report can be traced back to the settings behind it.
+
+name: default
+
+paths:
+  data_root: data
+  subject: sample
+  run_id: default
+
+prepare:
+  video_fps: 2.0        # ~120 frames from a 60 s orbit
+  max_dim: 1600         # longest edge; 0 keeps the original resolution
+  jpeg_quality: 95
+  max_images: 0         # 0 = keep everything
+
+qc:
+  blur_bottom_fraction: 0.10
+  blur_abs_min: 40.0
+  exposure_max_drift: 25.0
+  min_pair_matches: 100
+  overlap_features: 2000
+  static_bg_ratio: 0.55
+
+mask:
+  enabled: true         # required for turntable capture -- see khon_recon/masking.py
+  method: rembg         # "rembg" | "grabcut"
+  erode_px: 4
+  min_area_fraction: 0.02
+  max_area_fraction: 0.95
+  grabcut_margin: 0.08
+  grabcut_iterations: 5
+
+sfm:
+  camera_model: SIMPLE_RADIAL
+  single_camera: true
+  max_num_features: 8192
+  use_gpu: false        # no CUDA on Apple Silicon
+  matcher: exhaustive
+  subsample_every: 1    # the reduced-overlap ablation raises this
+  holdout_every: 5      # every 5th image becomes a novel-view test image
+  ba_global_max_refinements: 5
+  ba_local_max_refinements: 2
+  snapshot_before_final_ba: true
+  min_num_matches: 15
+
+dense:
+  max_image_size: 1600
+  geom_consistency: true
+  window_radius: 5
+  num_samples: 15
+  fusion_min_num_pixels: 5
+  fusion_max_reproj_error: 2.0
+
+mesh:
+  normal_knn: 30
+  normal_orient_knn: 30
+  use_existing_normals: true   # COLMAP fusion writes correctly oriented normals
+  outlier_nb_neighbors: 20
+  outlier_std_ratio: 2.0
+  poisson_depth: 10
+  poisson_scale: 1.1
+  density_trim_quantile: 0.03  # removes surface Poisson invented where nothing was seen
+  keep_largest_component: true
+  target_triangles: 0          # 0 = no decimation
+
+texture:
+  mode: vertex          # "vertex" | "uv"
+  texture_size: 4096
+  max_view_angle_deg: 70.0
+  blend: median         # median rejects specular highlights; see khon_recon/texture.py
+
+eval:
+  density_sample: 50000
+  render_width: 1200
+  specular_v_min: 230
+  specular_s_max: 60
+  masked_compare: true
