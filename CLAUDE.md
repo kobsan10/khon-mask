@@ -66,8 +66,13 @@ experiment, add a config field instead.
 
 Changes to geometry or metrics must be verified numerically, not by eye:
 
-- Re-running stage 1 on `sample` must reproduce **41/49 registered, 3245 points,
-  0.9825491068476192 px** exactly. Any drift means determinism broke.
+- Re-running stage 1 on `sample` must reproduce **40/49 registered, 2940 points,
+  0.8639385527882218 px** exactly (verified over three consecutive runs). Any
+  drift means determinism broke. Note this holds *given a fixed database*;
+  a fresh extraction still varies by ~1 pair in 1176.
+- COLMAP must record **2 cameras** at **3024x4032** and **4284x5712**. Many
+  cameras means EXIF was stripped at ingest; landscape dimensions mean the EXIF
+  rotation was not applied, and the Colab undistorter will abort.
 - `metrics.verify_against_builtin()` must still report `agrees=True` on
   `data/runs/*/sparse/train/0` (a model untouched since bundle adjustment).
 - After meshing, `outward_normal_fraction` in `mesh_stats.json` must be > 0.5.
@@ -121,10 +126,20 @@ backgrounds look: table features and object features then imply contradictory
 camera geometry. Merging 20 face-down shots into `sample` registered 0 of them
 and knocked the originals from 45/49 down to 34/49.
 
-**Ingest is in-place for this layout.** `data/raw/sample/images` is both the
-source and `cfg.images_dir`, so `ingest_images` detects that and does nothing.
-Removing that guard would make `--overwrite` delete the photographs before
-reading them — they are irreplaceable and `data/` is gitignored.
+**Ingest must not run in place, and must preserve EXIF.** Originals live in
+`data/raw/sample/originals`; ingest writes normalised copies to
+`data/raw/sample/images`. Two hazards meet here:
+
+- *In-place ingest is a no-op* (guarded), because clearing the destination would
+  delete the irreplaceable photographs. But skipping ingest also skips EXIF
+  normalisation — which is how the Colab undistorter came to abort with
+  `Check failed: distorted_camera.Width() == distorted_bitmap.Width()`. Every
+  photo carries orientation 6; macOS COLMAP records the stored size, Linux
+  COLMAP applies the rotation.
+- *Do not write with `cv2.imwrite`*: it discards all EXIF, and losing
+  FocalLength stops COLMAP grouping frames by lens — 2 cameras became 49, one
+  per image with unconstrained intrinsics. Ingest uses Pillow's
+  `exif_transpose` and passes the remaining EXIF through.
 
 **Held-out views must stay held out.** `sfm.holdout_every` withholds every k-th
 image from mapping; they are registered afterwards with `fix_existing_frames`.

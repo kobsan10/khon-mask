@@ -22,6 +22,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from PIL import Image, ImageOps
 
 from .config import Config
 from .io_utils import get_logger, list_images, timed
@@ -108,6 +109,17 @@ def frames_from_video(video: Path, out_dir: Path, fps: float, overwrite: bool = 
     return count
 
 
+def _exif_orientation(path: Path) -> int | None:
+    """EXIF orientation tag, or None when absent. 1 means upright."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            return img.getexif().get(274)
+    except Exception:
+        return None
+
+
 def _even_subset(paths: list[Path], max_images: int) -> list[Path]:
     """Evenly spaced subset, preserving angular coverage.
 
@@ -143,6 +155,22 @@ def ingest_images(
                 "clearing it would destroy the source photographs",
                 source,
             )
+        # Skipping the ingest also skips EXIF-orientation normalisation, which
+        # matters more than it sounds: COLMAP on macOS records a rotated image
+        # at its stored size while COLMAP on Linux applies the rotation, so a
+        # model built here fails on Colab with
+        #   Check failed: distorted_camera.Width() == distorted_bitmap.Width()
+        # Ingesting from a separate directory rewrites the pixels upright and
+        # drops the tag, so every reader agrees.
+        rotated = sum(1 for p in paths[:20] if _exif_orientation(p) not in (None, 1))
+        if rotated:
+            log.warning(
+                "%d of the first %d images carry an EXIF rotation tag and are NOT "
+                "being normalised, because the source is already the subject "
+                "directory. Move them elsewhere and re-ingest, or the dense stage "
+                "will fail on a differently-behaving COLMAP build.",
+                rotated, min(20, len(paths)),
+            )
         log.info("images are already in place (%d files); nothing to ingest", len(paths))
         return {
             "source": str(source),
@@ -167,25 +195,41 @@ def ingest_images(
             target = dest / path.name
             if target.exists() and not overwrite:
                 continue
-            image = cv2.imread(str(path), cv2.IMREAD_COLOR)
-            if image is None:
-                log.warning("skipping unreadable file: %s", path.name)
+            # Pillow rather than OpenCV, for two reasons that both matter:
+            #
+            #   * exif_transpose bakes the rotation into the pixels and drops the
+            #     orientation tag, so every reader reports the same dimensions.
+            #     COLMAP builds disagree otherwise -- macOS records a rotated
+            #     image at its stored size while Linux applies the rotation, and
+            #     the Colab undistorter then aborts on a width mismatch.
+            #   * the remaining EXIF is carried over. cv2.imwrite discards it,
+            #     and losing FocalLength stops COLMAP grouping frames by lens:
+            #     on this capture that turned 2 cameras into 49, one per image,
+            #     each with unconstrained intrinsics.
+            try:
+                with Image.open(path) as raw:
+                    image = ImageOps.exif_transpose(raw)
+                    exif_bytes = image.info.get("exif")
+                    if image.mode != "RGB":
+                        image = image.convert("RGB")
+                    w, h = image.size
+                    if max_dim > 0 and max(w, h) > max_dim:
+                        scale = max_dim / max(w, h)
+                        image = image.resize(
+                            (int(round(w * scale)), int(round(h * scale))),
+                            Image.LANCZOS,
+                        )
+                        resized += 1
+                    # Always JPEG so downstream naming is predictable, at high
+                    # quality: blocking artifacts degrade feature matching.
+                    target = target.with_suffix(".jpg")
+                    save_kwargs = {"quality": cfg.prepare.jpeg_quality, "subsampling": 0}
+                    if exif_bytes:
+                        save_kwargs["exif"] = exif_bytes
+                    image.save(target, "JPEG", **save_kwargs)
+            except Exception as exc:
+                log.warning("skipping unreadable file %s (%s)", path.name, exc)
                 continue
-            h, w = image.shape[:2]
-            if max_dim > 0 and max(h, w) > max_dim:
-                scale = max_dim / max(h, w)
-                image = cv2.resize(
-                    image,
-                    (int(round(w * scale)), int(round(h * scale))),
-                    interpolation=cv2.INTER_AREA,
-                )
-                resized += 1
-            # Always write JPEG so downstream naming is predictable, and keep
-            # quality high: JPEG blocking artifacts degrade feature matching.
-            target = target.with_suffix(".jpg")
-            cv2.imwrite(
-                str(target), image, [int(cv2.IMWRITE_JPEG_QUALITY), cfg.prepare.jpeg_quality]
-            )
 
     final = list_images(dest)
     if len(final) < 20:
