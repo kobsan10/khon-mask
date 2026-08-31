@@ -119,6 +119,16 @@ class SfMConfig:
     # Save a pre-final-BA snapshot so the ablation can quantify BA's effect.
     snapshot_before_final_ba: bool = True
     min_num_matches: int = 15
+    # Let the mapper start over from a different seed pair when a reconstruction
+    # stalls, then keep the largest model. Disabling this makes a single bad
+    # initial pair fatal: on this capture it turned a 48/49 reconstruction into
+    # 5/49. The subject is specular and its features are weak, so the choice of
+    # seed pair matters far more than it would on an easy scene.
+    multiple_models: bool = True
+    # Threads for mapping. Incremental SfM is order-sensitive and multi-threaded
+    # bundle adjustment does not reduce deterministically, so >1 makes runs
+    # irreproducible. Set to 1 when a result has to be exactly repeatable.
+    mapper_num_threads: int = -1
 
 
 @dataclass

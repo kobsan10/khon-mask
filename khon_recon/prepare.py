@@ -130,6 +130,30 @@ def ingest_images(
 
     dest = cfg.images_dir
     dest.mkdir(parents=True, exist_ok=True)
+
+    # Photographs already sitting in the subject directory are the originals,
+    # and they are irreplaceable. Wiping the destination here would delete the
+    # very files we are about to read, so an in-place ingest is a no-op rather
+    # than a destructive rewrite.
+    in_place = source.resolve() == dest.resolve()
+    if in_place:
+        if overwrite:
+            log.warning(
+                "--overwrite ignored: %s is already the subject directory, and "
+                "clearing it would destroy the source photographs",
+                source,
+            )
+        log.info("images are already in place (%d files); nothing to ingest", len(paths))
+        return {
+            "source": str(source),
+            "n_source_images": len(paths),
+            "n_ingested": len(paths),
+            "n_resized": 0,
+            "max_dim": cfg.prepare.max_dim,
+            "images_dir": str(dest),
+            "in_place": True,
+        }
+
     if overwrite:
         for path in list_images(dest):
             path.unlink()
