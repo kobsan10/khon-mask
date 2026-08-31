@@ -42,32 +42,32 @@ offloaded to a free Colab GPU via `notebooks/colmap_dense_colab.ipynb`.
 
 ```bash
 # 0. ingest, QC the capture, build foreground masks
-python scripts/00_prepare_images.py -c configs/mask01.yaml --input ~/khon_photos
+python scripts/00_prepare_images.py -c configs/sample.yaml --input data/raw/sample/images
 
 # 1. sparse reconstruction (poses + sparse cloud + Eq. (1) error)
-python scripts/01_sfm.py -c configs/mask01.yaml
+python scripts/01_sfm.py -c configs/sample.yaml
 
 # 2. package for the GPU stage
-python scripts/02_dense_export.py -c configs/mask01.yaml
+python scripts/02_dense_export.py -c configs/sample.yaml
 #    -> run notebooks/colmap_dense_colab.ipynb on Colab, download fused.ply
 
 # 3. bring the dense cloud back (checks it matches the sparse model)
-python scripts/03_dense_import.py ~/Downloads/fused.ply -c configs/mask01.yaml
+python scripts/03_dense_import.py ~/Downloads/fused.ply -c configs/sample.yaml
 
 # 4-5. surface reconstruction and colour recovery
-python scripts/04_mesh.py    -c configs/mask01.yaml
-python scripts/05_texture.py -c configs/mask01.yaml
+python scripts/04_mesh.py    -c configs/sample.yaml
+python scripts/05_texture.py -c configs/sample.yaml
 
 # 6-8. evaluation, ablations, paper figures
-python scripts/06_evaluate.py  -c configs/mask01.yaml
-python scripts/07_ablations.py -c configs/mask01.yaml
-python scripts/08_report.py    -c configs/mask01.yaml
+python scripts/06_evaluate.py  -c configs/sample.yaml
+python scripts/07_ablations.py -c configs/sample.yaml
+python scripts/08_report.py    -c configs/sample.yaml
 ```
 
 Any config value can be overridden per-run without editing files:
 
 ```bash
-python scripts/04_mesh.py -c configs/mask01.yaml -s mesh.poisson_depth=9
+python scripts/04_mesh.py -c configs/sample.yaml -s mesh.poisson_depth=9
 ```
 
 ### No photographs yet?
@@ -111,7 +111,7 @@ khon_recon/           importable package -- all logic
   ablations.py        reduced overlap, minimal BA, no masks
   report.py           figures + LaTeX tables at IEEE column width
 scripts/              numbered CLI stages, 00 -> 08
-configs/              default.yaml, mask01.yaml
+configs/              default.yaml, sample.yaml
 notebooks/            the Colab dense stage
 data/                 gitignored: raw/<subject>/, runs/<run_id>/
 ```
@@ -162,7 +162,16 @@ refined model and runs a full global BA over it, changing nothing else.
 
 - Dense MVS requires the Colab round trip (no CUDA locally). A local OpenMVS
   backend can be added behind the interface in `dense.py`.
-- `rembg` masks are weakest on fine crown silhouettes — inspect
-  `figures/mask_previews/` and compare against the `no_mask` ablation.
+- **Runs are only reproducible with `sfm.multiple_models=true` and
+  `sfm.mapper_num_threads=1`.** At the defaults, five identical runs on this
+  capture registered between 5 and 46 of 49 images — see
+  `data/repeatability_study.json`. Both settings are already set in
+  `configs/sample.yaml`.
+- **Masking hurts this capture and is off.** The gilded surface yields almost no
+  matchable features, so the background carries the geometry; masking took
+  usable image pairs from 21.9% to 1.7%. Masking remains correct for a true
+  turntable capture — verify with the match graph, not by assumption.
 - Gilded and mirrored surfaces are the expected failure mode; the specularity
   study measures it rather than assuming it.
+- The current capture never shows the mask's underside, so the result is an open
+  shell rather than a closed model.

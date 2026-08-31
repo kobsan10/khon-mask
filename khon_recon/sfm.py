@@ -66,12 +66,16 @@ def _pipeline_options(cfg: Config, image_names: list[str] | None) -> pycolmap.In
     options.min_num_matches = cfg.sfm.min_num_matches
     options.ba_global_max_refinements = cfg.sfm.ba_global_max_refinements
     options.ba_local_max_refinements = cfg.sfm.ba_local_max_refinements
-    # A single mask is a single object: multiple disconnected models almost
-    # always means the capture broke, and silently keeping the largest one
-    # hides that. Ask for one model and report if it fragments.
-    options.multiple_models = False
+    # Allowing several models lets the mapper recover from a bad initial pair
+    # instead of giving up; run_sfm keeps the largest and reports fragmentation.
+    options.multiple_models = cfg.sfm.multiple_models
     options.extract_colors = True
-    options.random_seed = 0  # reproducible runs; ablations must be comparable
+    options.random_seed = 0
+    if cfg.sfm.mapper_num_threads > 0:
+        # Single-threaded mapping is the only way to get bit-identical reruns:
+        # random_seed fixes RANSAC, but multi-threaded bundle adjustment still
+        # reduces in nondeterministic order.
+        options.num_threads = cfg.sfm.mapper_num_threads
     if image_names:
         options.image_names = image_names
     return options

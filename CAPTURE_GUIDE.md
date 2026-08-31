@@ -82,7 +82,7 @@ Run the QC on the spot — it takes under a minute and tells you whether to
 reshoot while you still can:
 
 ```bash
-python scripts/00_prepare_images.py -c configs/mask01.yaml --input /path/to/photos
+python scripts/00_prepare_images.py -c configs/sample.yaml --input /path/to/photos
 ```
 
 Check that it reports:
@@ -95,7 +95,7 @@ Check that it reports:
 Then, if time allows, run SfM before leaving:
 
 ```bash
-python scripts/01_sfm.py -c configs/mask01.yaml
+python scripts/01_sfm.py -c configs/sample.yaml
 ```
 
 - [ ] nearly all images registered

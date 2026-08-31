@@ -1,0 +1,57 @@
+# Real capture: gilded Khon mask (Thotsakan-style, tall mongkut), 49 photos,
+# iPhone 15 Pro Max, 2025-08-30.
+#
+#   python scripts/00_prepare_images.py -c configs/sample.yaml
+#   python scripts/01_sfm.py            -c configs/sample.yaml
+#
+# Images already live at data/raw/sample/images, so stage 0 needs no --input.
+
+extends: default.yaml
+
+name: sample
+
+paths:
+  subject: sample
+  run_id: sample
+
+sfm:
+  # CRITICAL: this set was shot with TWO lenses on the same phone --
+  # 25 frames on the 2.2 mm ultra-wide (4032x3024) and 24 on the 6.8 mm
+  # main camera (5712x4284). Fitting one shared intrinsic to both would be
+  # wrong and would corrupt every pose. COLMAP must fit a camera per lens.
+  single_camera: false
+  # Measured on this capture (see data/repeatability_study.json): with these
+  # two settings at their defaults, five identical runs registered anywhere
+  # from 5 to 46 of 49 images. Together they make the run reproducible --
+  # verified bit-identical across consecutive runs at 41/49, 0.9825 px.
+  multiple_models: true     # let the mapper restart after a bad seed pair
+  mapper_num_threads: 1     # deterministic bundle adjustment
+  # The mask is small in frame and its surface is gilded, so usable features
+  # are scarce; ask for more of them.
+  max_num_features: 16000
+  matcher: exhaustive
+
+prepare:
+  # Downscale for tractable CPU SfM. Raise to 2400 for a final high-detail run
+  # once the pipeline is known to work on this set.
+  max_dim: 1600
+
+mask:
+  # Measured, not assumed: masking this capture COLLAPSES the match graph,
+  # because the gilded surface yields almost no matchable features and the
+  # background is carrying the geometry. On the companion set, masking took
+  # usable image pairs from 21.9% down to 1.7%. Keep masking OFF here.
+  enabled: false
+  method: rembg
+  erode_px: 3
+
+mesh:
+  # The object never leaves the table, so its underside is unobserved. Expect
+  # an open shell, not a watertight model; trim aggressively so Poisson does
+  # not invent a base that was never photographed.
+  poisson_depth: 10
+  density_trim_quantile: 0.06
+
+texture:
+  mode: vertex   # switch to uv for the final deliverable model
+  blend: median  # rejects the specular glitter highlights on the gilding
