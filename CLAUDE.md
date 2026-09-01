@@ -66,10 +66,23 @@ experiment, add a config field instead.
 
 Changes to geometry or metrics must be verified numerically, not by eye:
 
-- Re-running stage 1 on `sample` must reproduce **40/49 registered, 2940 points,
-  0.8639385527882218 px** exactly (verified over three consecutive runs). Any
-  drift means determinism broke. Note this holds *given a fixed database*;
-  a fresh extraction still varies by ~1 pair in 1176.
+- Re-running stage 1 on `sample` **from the existing `database.db`** must
+  reproduce **40/49 registered, 2940 points, 0.8639385527882218 px** exactly.
+  Any drift there means determinism broke.
+- **That guarantee does not survive a fresh feature extraction.** Four runs of
+  identical config, each building its own database, registered **35, 36, 40 and
+  45** of 49 images (39 ± 4.5, CV 11.7%) with 2387–2940 points
+  (`data/runs/extraction_variance.json`). `sfm.multiple_models` and
+  `sfm.mapper_num_threads=1` removed the catastrophic 5–46 spread, not all
+  variance: the match graph shifts slightly and incremental mapping amplifies
+  it. Consequences that matter:
+  - Never quote a single registration count in the paper without the spread.
+  - **Ablations must be read against their own `full` control**, never against
+    the main run — each ablation builds a fresh database, so its baseline is
+    a different sample. Measured: `full` gave 36/2387 where the main run gave
+    40/2940, under identical settings.
+  - Eq. (1) is far more stable than registration (CV 5.5% vs 11.7%) — another
+    reason it must never be quoted as evidence that SfM succeeded.
 - COLMAP must record **2 cameras** at **3024x4032** and **4284x5712**. Many
   cameras means EXIF was stripped at ingest; landscape dimensions mean the EXIF
   rotation was not applied, and the Colab undistorter will abort.
@@ -98,13 +111,20 @@ self-occluded and texturing colour ~nothing. Normals must be oriented with the
 reconstructed camera centres, and COLMAP's own `fused.ply` normals are preferred
 over re-estimating (`mesh.estimate_normals`).
 
-**SfM here is not reproducible by default.** Five identical runs registered
-5, 34, 41, 45 and 46 of 49 images (CV 50%). Feature extraction and matching are
-near-deterministic; the variance is entirely in incremental mapping. Two causes,
-both now config fields: `multiple_models=False` let one bad seed pair end the
-reconstruction, and multi-threaded bundle adjustment reduces in nondeterministic
-order. `sfm.multiple_models=true` plus `sfm.mapper_num_threads=1` gives
-bit-identical reruns. Full analysis in `data/repeatability_study.json`.
+**SfM here is not reproducible by default, and only partly reproducible after
+the fix.** Five identical runs at the defaults registered 5, 34, 41, 45 and 46
+of 49 images (CV 50%). Two causes, both now config fields:
+`multiple_models=False` let one bad seed pair end the reconstruction, and
+multi-threaded bundle adjustment reduces in nondeterministic order.
+`sfm.multiple_models=true` plus `sfm.mapper_num_threads=1` gives bit-identical
+reruns **from a fixed `database.db`**. Full analysis in
+`data/repeatability_study.json`.
+
+It does *not* give bit-identical reruns from a fresh feature extraction: four
+such runs registered 35–45 of 49 (CV 11.7%), so the earlier conclusion that
+"the variance is entirely in incremental mapping" was wrong — extraction
+contributes a small match-graph difference that mapping then amplifies. See the
+Verification section and `data/runs/extraction_variance.json`.
 
 **Open3D's Poisson crashes at random, and `n_threads` makes it worse.**
 Open3D 0.19's bundled PoissonRecon aborts with `Failed to close loop` on
