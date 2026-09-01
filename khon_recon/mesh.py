@@ -347,6 +347,72 @@ def clean_mesh(mesh, cfg: Config) -> tuple[Any, dict[str, Any]]:
     }
 
 
+def upright_transform(reconstruction) -> np.ndarray:
+    """4x4 mapping the reconstruction frame to a Y-up, face-toward-viewer frame.
+
+    COLMAP's world frame inherits the camera convention, where +Y points *down*.
+    Every mesh viewer assumes Y-up, so the model opens upside down and facing
+    away -- which looks like a reconstruction failure and is not one.
+
+    The frame is recovered from the cameras rather than from the geometry:
+    each registered image contributes its own up vector (the camera's -Y axis
+    in world coordinates) and its viewing direction, so "up" is up in the
+    photographs and "front" is the side the photographer stood on.
+    """
+    images = [im for im in reconstruction.images.values() if im.has_pose]
+    if not images:
+        raise ValueError("no registered images; cannot recover an upright frame")
+
+    up = np.mean([-im.cam_from_world().rotation.matrix()[1] for im in images], axis=0)
+    up /= np.linalg.norm(up)
+
+    look = np.mean([im.cam_from_world().rotation.matrix()[2] for im in images], axis=0)
+    front = -look / np.linalg.norm(look)          # object -> cameras
+    front -= up * (front @ up)                    # orthogonalise against up
+    front /= np.linalg.norm(front)
+    right = np.cross(up, front)
+
+    transform = np.eye(4)
+    transform[:3, :3] = np.stack([right, up, front])
+    return transform
+
+
+def export_upright(cfg: Config, mesh_path: Path, out_path: Path) -> dict[str, Any]:
+    """Write a viewer-friendly copy: Y-up, centred, facing the camera.
+
+    A *copy* on purpose. Stage 6 renders the mesh from the estimated camera
+    poses, so the canonical mesh must stay in the reconstruction frame; moving
+    it would silently invalidate every novel-view metric.
+    """
+    import copy as _copy
+
+    import open3d as o3d
+
+    from .metrics import load_reconstruction
+
+    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+    if len(mesh.triangles) == 0:
+        raise ValueError(f"{mesh_path} has no triangles")
+
+    transform = upright_transform(load_reconstruction(cfg.sparse_dir))
+    upright = _copy.deepcopy(mesh).transform(transform)
+    # Centre on the origin so a viewer frames the model instead of hunting for it.
+    centre = upright.get_axis_aligned_bounding_box().get_center()
+    upright.translate(-centre)
+    upright.compute_vertex_normals()
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    o3d.io.write_triangle_mesh(str(out_path), upright)
+    extent = upright.get_axis_aligned_bounding_box().get_extent()
+    log.info("wrote upright viewing copy to %s", out_path)
+    return {
+        "upright_ply": str(out_path),
+        "source": str(mesh_path),
+        "transform": transform.tolist(),
+        "extent_xyz": [float(v) for v in extent],
+    }
+
+
 def transfer_vertex_colors(mesh, pcd) -> Any:
     """Colour mesh vertices from the nearest dense point.
 

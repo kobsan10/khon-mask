@@ -159,20 +159,83 @@ refined model and runs a full global BA over it, changing nothing else.
 
 ---
 
+## Results on the `sample` capture
+
+49 photographs of a gilded Khon mask, iPhone 15 Pro Max, two lenses. Full run
+recorded in `data/runs/sample/` (gitignored; reproducible from the photographs
+plus `configs/sample.yaml`).
+
+| | |
+| --- | --- |
+| Registered images | 40 / 49 — but **35–45 across identical runs** |
+| Sparse points, mean track length | 2,940, 4.98 |
+| **Eq. (1) mean reprojection error** | **1.0514 px** over 14,653 observations |
+| Dense cloud | 105,545 points, median spacing 0.0054 |
+| Mesh | 255,925 v, 506,860 t, 55 holes, not watertight |
+| Outward normals / unseen surface | 98.5% / 0.98% |
+| Novel-view (held-out, n=7) | PSNR 16.73 dB, SSIM 0.364 |
+| **Azimuth coverage** | **143.8°** — a 216° gap |
+| Specularity correlation | r = −0.034 |
+
+Four results worth reporting honestly, because three contradict expectations:
+
+**Masking hurt this capture.** The gilded surface yields almost no matchable
+SIFT features, so the *background* carries the geometry — only ~40% of sparse
+points lie on the mask. Masking took usable image pairs from 21.9% to 1.7% and
+registration to 3/66. `mask.enabled: false` is a measured choice.
+
+**Reprojection error falls as reconstruction fails.** It is computed only over
+images that registered. The `overlap_third` ablation scored the *best* error in
+the table (0.837 px) while registering 6 of 17 images; the full run scored
+1.177 px. Never quote it without the registered count.
+
+**The specularity prediction is not supported by the correlation.** r = −0.034
+is essentially zero, though specular blocks did recover 0.78x the points of
+matte blocks. Only 0.8% of blocks registered as specular, so the study is
+underpowered on this capture.
+
+**Reduced overlap collapses rather than degrades.** Half the images registered
+13 of 25; a third registered 6 of 17. With only 143.8° of azimuth there was no
+overlap margin to give away.
+
+Bundle adjustment, isolated on one fixed model, improved Eq. (1) from 1.2804 to
+1.0590 px (**17.3%**) — the cleanest single measurement in the study.
+
+---
+
 ## Known constraints
 
 - Dense MVS requires the Colab round trip (no CUDA locally). A local OpenMVS
   backend can be added behind the interface in `dense.py`.
-- **Runs are only reproducible with `sfm.multiple_models=true` and
-  `sfm.mapper_num_threads=1`.** At the defaults, five identical runs on this
-  capture registered between 5 and 46 of 49 images — see
-  `data/repeatability_study.json`. Both settings are already set in
-  `configs/sample.yaml`.
+- **SfM is reproducible only from a fixed feature database.** With
+  `sfm.multiple_models=true` and `sfm.mapper_num_threads=1` (both already set in
+  `configs/sample.yaml`), re-mapping an existing `database.db` is bit-identical.
+  A *fresh* extraction is not: four identical runs registered 35, 36, 40 and 45
+  of 49 images (CV 11.7%). At the defaults it was far worse — 5 to 46. See
+  `data/repeatability_study.json` and `data/runs/extraction_variance.json`.
+  Consequence: never quote one registration count, and read ablations against
+  their own `full` control, since each builds its own database.
+- **Poisson fails intermittently and lies about it.** Open3D 0.19's PoissonRecon
+  aborts on ~25–33% of runs with `Failed to close loop`, exiting with status
+  *zero* having written nothing. `mesh.py` isolates it in a child process and
+  retries, testing for the output file rather than the exit code. Never pass its
+  `n_threads` argument — any value, including its own default of `-1`, crashed
+  100% of runs here.
+- **Meshes are written twice.** The canonical mesh stays in COLMAP's world frame
+  (+Y down) because stage 6 renders from the estimated camera poses; a
+  `*_upright.ply` copy is rotated Y-up and centred for viewing. Open the upright
+  one in MeshLab, or the model appears upside down and facing away.
 - **Masking hurts this capture and is off.** The gilded surface yields almost no
   matchable features, so the background carries the geometry; masking took
   usable image pairs from 21.9% to 1.7%. Masking remains correct for a true
   turntable capture — verify with the match graph, not by assumption.
 - Gilded and mirrored surfaces are the expected failure mode; the specularity
   study measures it rather than assuming it.
-- The current capture never shows the mask's underside, so the result is an open
-  shell rather than a closed model.
+- **The `sample` capture spans only 143.8° of azimuth** (a 216° gap), all from
+  above, so the result is an open shell with no back. 55 holes remain, verified
+  genuine rather than trim artefacts (`data/runs/sample/mesh_sweep.json`). This
+  is the dominant limitation and only a fuller capture fixes it — see
+  [CAPTURE_GUIDE.md](CAPTURE_GUIDE.md).
+- **Dense MVS defaults to `max_image_size: 1600`**, about a third of the
+  captured resolution. Raising it is the cheapest quality improvement available
+  and needs no reshoot, only another Colab run.

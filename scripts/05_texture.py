@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from khon_recon.cli import base_parser, resolve
 from khon_recon.io_utils import get_logger, update_manifest, write_json
+from khon_recon.mesh import export_upright
 from khon_recon.texture import run_texturing
 from khon_recon.previews import write_stage_preview
 
@@ -36,6 +37,21 @@ def main() -> int:
             "have no real colour. Add viewpoints covering them.",
             100 * unseen,
         )
+    # A viewer-frame copy alongside the canonical mesh. COLMAP's world frame has
+    # +Y pointing down, so every mesh viewer opens the model upside down and
+    # facing away -- which reads as a failed reconstruction. The canonical mesh
+    # must stay in the reconstruction frame for stage 6 to render from the
+    # estimated poses, hence a copy rather than a rewrite.
+    source = Path(stats.get("output", cfg.mesh_dir / "mesh_textured.ply"))
+    if source.suffix == ".ply":
+        try:
+            upright = export_upright(
+                cfg, source, source.with_name(f"{source.stem}_upright.ply")
+            )
+            update_manifest(cfg.run_dir, "texture_upright", upright)
+        except Exception as exc:  # noqa: BLE001 -- a viewing copy must not fail the stage
+            log.warning("could not write the upright viewing copy: %s", exc)
+
     write_stage_preview(cfg, "texture")
     log.info("stage 5 complete -- next: python scripts/06_evaluate.py")
     return 0
