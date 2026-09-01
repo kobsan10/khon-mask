@@ -57,6 +57,67 @@ def clean_point_cloud(pcd, cfg: Config) -> tuple[Any, dict[str, Any]]:
     return pcd, {"points_before": before, "points_after": after}
 
 
+def keep_largest_cluster(pcd, cfg: Config, median_spacing: float) -> tuple[Any, dict[str, Any]]:
+    """Keep only the connected component the object belongs to.
+
+    MVS densifies whatever it can match, which on a table-top capture is the
+    object plus fragments of the surface it stands on. Statistical outlier
+    removal does not touch those: they are locally dense, so they look like
+    perfectly good surface. Poisson then cannot tell them from the object and
+    wraps one continuous surface around everything, growing a skirt off the
+    base.
+
+    This has to happen *before* meshing. Afterwards the skirt and the object
+    are a single connected component, so ``clean_mesh``'s largest-component
+    filter can no longer separate them.
+    """
+    import numpy as np
+
+    before = len(pcd.points)
+    if not cfg.mesh.keep_largest_cluster or before == 0 or median_spacing <= 0:
+        return pcd, {"cluster_filter": "disabled", "points_after_cluster": before}
+
+    eps = median_spacing * cfg.mesh.cluster_eps_spacings
+    with timed(f"clustering {before} points (eps={eps:.4g})", log):
+        labels = np.asarray(
+            pcd.cluster_dbscan(eps=eps, min_points=cfg.mesh.cluster_min_points)
+        )
+
+    if (labels >= 0).sum() == 0:
+        log.warning("clustering found no dense component; keeping the cloud as-is")
+        return pcd, {"cluster_filter": "no-op", "points_after_cluster": before}
+
+    sizes = np.bincount(labels[labels >= 0])
+    largest = int(np.argmax(sizes))
+    keep = np.flatnonzero(labels == largest)
+    removed_fraction = 1.0 - len(keep) / before
+
+    stats = {
+        "cluster_filter": "largest",
+        "cluster_eps": float(eps),
+        "n_clusters": int(len(sizes)),
+        "points_after_cluster": int(len(keep)),
+        "cluster_removed_fraction": float(removed_fraction),
+    }
+
+    if removed_fraction > cfg.mesh.cluster_max_removed_fraction:
+        raise ValueError(
+            f"cluster filter would discard {removed_fraction:.1%} of the cloud "
+            f"({before - len(keep)} of {before} points), above the "
+            f"{cfg.mesh.cluster_max_removed_fraction:.0%} limit. The object is "
+            "probably split across several components -- raise "
+            "mesh.cluster_eps_spacings to bridge the gaps, or disable the "
+            "filter with mesh.keep_largest_cluster=false."
+        )
+
+    log.info(
+        "kept %d/%d points in the largest of %d clusters (%.1f%% removed as "
+        "detached fragments)",
+        len(keep), before, len(sizes), 100 * removed_fraction,
+    )
+    return pcd.select_by_index(keep.tolist()), stats
+
+
 def estimate_normals(pcd, cfg: Config, camera_centers: np.ndarray | None = None):
     """Estimate and consistently orient point normals.
 
@@ -121,17 +182,101 @@ def _orient_normals_towards_cameras(pcd, camera_centers: np.ndarray) -> None:
         )
 
 
-def poisson_mesh(pcd, cfg: Config) -> tuple[Any, dict[str, Any]]:
-    """Run Poisson reconstruction and trim invented low-density geometry."""
+_POISSON_WORKER = r"""
+import sys
+import numpy as np
+import open3d as o3d
+
+src, dst, depth, scale = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4])
+pcd = o3d.io.read_point_cloud(src)
+mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+    pcd, depth=depth, scale=scale, linear_fit=False
+)
+np.savez(
+    dst,
+    vertices=np.asarray(mesh.vertices),
+    triangles=np.asarray(mesh.triangles),
+    densities=np.asarray(densities),
+)
+"""
+
+
+def _poisson_isolated(pcd, depth: int, scale: float, attempts: int):
+    """Run Poisson in a child process, retrying when it aborts.
+
+    Open3D 0.19's bundled PoissonRecon intermittently fails iso-surface
+    extraction with ``Failed to close loop`` and calls abort(). Measured on
+    this cloud it fired on roughly a quarter to a third of runs, whether or
+    not normals had been reoriented. abort() cannot be caught in-process, so
+    the call is isolated in a child and retried; otherwise the stage would
+    fail at random on a pipeline whose results have to be reproducible.
+
+    Two measured facts to stop the obvious "fixes":
+
+    *Do not pass ``n_threads``.* The argument exists and looks like the same
+    determinism knob that ``sfm.mapper_num_threads`` turned out to be. It is
+    not: passing it *at all* -- 1, 2, 4, 16, even its own default of -1 --
+    crashed 100% of runs here, against ~25% when the argument is omitted.
+
+    *The residual variation is float noise, not instability.* Successful runs
+    always return the same vertex and triangle counts, but vertex positions
+    differ in their low-order bits, which moves the density-trim quantile and
+    shifts the final vertex count by a handful in ~256k (0.003%). The figures
+    the pipeline actually reports -- outward normal fraction, hole count --
+    are stable across runs.
+    """
+    import subprocess
+    import sys
+    import tempfile
+
     import open3d as o3d
 
+    with tempfile.TemporaryDirectory() as tmp:
+        src = f"{tmp}/points.ply"
+        dst = f"{tmp}/mesh.npz"
+        o3d.io.write_point_cloud(src, pcd)
+        for attempt in range(1, attempts + 1):
+            result = subprocess.run(
+                [sys.executable, "-c", _POISSON_WORKER, src, dst, str(depth), str(scale)],
+                capture_output=True,
+                text=True,
+                errors="replace",
+            )
+            if result.returncode == 0:
+                data = np.load(dst)
+                mesh = o3d.geometry.TriangleMesh(
+                    o3d.utility.Vector3dVector(data["vertices"]),
+                    o3d.utility.Vector3iVector(data["triangles"]),
+                )
+                if attempt > 1:
+                    log.info("Poisson succeeded on attempt %d", attempt)
+                return mesh, data["densities"], attempt
+            log.warning(
+                "Poisson aborted (attempt %d/%d): %s",
+                attempt, attempts,
+                result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "no output",
+            )
+
+    raise RuntimeError(
+        f"Poisson reconstruction aborted on all {attempts} attempts. This is an "
+        "Open3D 0.19 defect, not a data problem, but a cloud that fails every "
+        "time is worth inspecting -- try a different mesh.poisson_depth."
+    )
+
+
+def poisson_mesh(pcd, cfg: Config) -> tuple[Any, dict[str, Any]]:
+    """Run Poisson reconstruction and trim invented low-density geometry."""
     with timed(f"Poisson reconstruction (depth={cfg.mesh.poisson_depth})", log):
-        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-            pcd, depth=cfg.mesh.poisson_depth, scale=cfg.mesh.poisson_scale, linear_fit=False
+        mesh, densities, attempts = _poisson_isolated(
+            pcd,
+            cfg.mesh.poisson_depth,
+            cfg.mesh.poisson_scale,
+            cfg.mesh.poisson_max_attempts,
         )
     densities = np.asarray(densities)
     stats: dict[str, Any] = {
         "poisson_depth": cfg.mesh.poisson_depth,
+        "poisson_attempts": attempts,
         "vertices_raw": len(mesh.vertices),
         "triangles_raw": len(mesh.triangles),
     }
@@ -279,6 +424,11 @@ def run_meshing(cfg: Config, input_ply: Path | None = None) -> dict[str, Any]:
 
     pcd, clean_stats = clean_point_cloud(pcd, cfg)
     stats.update(clean_stats)
+
+    pcd, cluster_stats = keep_largest_cluster(
+        pcd, cfg, float(stats["density"].get("median_spacing", 0.0))
+    )
+    stats.update(cluster_stats)
 
     # Camera positions orient the normal field; without them Poisson can
     # produce a geometrically plausible but inside-out surface.

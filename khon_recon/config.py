@@ -164,8 +164,24 @@ class MeshConfig:
     # Statistical outlier removal on the dense cloud before meshing.
     outlier_nb_neighbors: int = 20
     outlier_std_ratio: float = 2.0
+    # Drop dense-cloud fragments not connected to the object, before Poisson
+    # gets a chance to wrap them into the same surface. The radius is a
+    # multiple of the cloud's own median point spacing because SfM scale is
+    # arbitrary -- an absolute distance would mean something different on
+    # every reconstruction.
+    keep_largest_cluster: bool = True
+    cluster_eps_spacings: float = 6.0
+    cluster_min_points: int = 15
+    # Refuse to continue if clustering discards more than this fraction. A
+    # cluster filter that eats the object is exactly the kind of failure that
+    # still produces a confident-looking mesh, so it fails loudly instead.
+    cluster_max_removed_fraction: float = 0.25
     poisson_depth: int = 10
     poisson_scale: float = 1.1
+    # Open3D 0.19's Poisson aborts intermittently ("Failed to close loop") on
+    # roughly a third of runs. It is isolated in a child process and retried;
+    # successful runs are bit-identical, so retrying costs nothing but time.
+    poisson_max_attempts: int = 8
     # Drop the lowest-density vertices: this is what removes the balloon
     # artifacts Poisson invents over under-observed regions (eye sockets).
     density_trim_quantile: float = 0.03

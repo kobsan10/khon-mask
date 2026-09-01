@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from khon_recon.cli import base_parser, resolve
 from khon_recon.dense import import_fused
 from khon_recon.io_utils import get_logger, update_manifest
+from khon_recon.previews import write_stage_preview
 
 log = get_logger("dense_import")
 
@@ -31,6 +32,7 @@ def main() -> int:
         log.error("alignment check FAILED -- do not trust the mesh built from this cloud")
         return 1
 
+    write_stage_preview(cfg, "dense")
     log.info(
         "imported %d dense points -- next: python scripts/04_mesh.py", stats["n_points"]
     )

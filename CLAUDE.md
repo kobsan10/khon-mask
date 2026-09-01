@@ -106,6 +106,31 @@ reconstruction, and multi-threaded bundle adjustment reduces in nondeterministic
 order. `sfm.multiple_models=true` plus `sfm.mapper_num_threads=1` gives
 bit-identical reruns. Full analysis in `data/repeatability_study.json`.
 
+**Open3D's Poisson crashes at random, and `n_threads` makes it worse.**
+Open3D 0.19's bundled PoissonRecon aborts with `Failed to close loop` on
+roughly a quarter to a third of runs on the `sample` dense cloud. It is an
+`abort()`, not an exception, so it cannot be caught in-process — `mesh.py`
+isolates the call in a child process and retries (`mesh.poisson_max_attempts`).
+Do **not** try to stabilise it with the `n_threads` argument: it looks like the
+knob `sfm.mapper_num_threads` turned out to be, but passing it at all — 1, 2, 4,
+16, or even its documented default of `-1` — crashed 100% of runs, against ~25%
+with the argument omitted. Successful runs always agree on vertex and triangle
+counts; only the low-order bits of vertex positions vary, which moves the
+density-trim quantile and the final count by <0.01%.
+
+**Dense MVS reconstructs the object, not the background — the opposite of the
+sparse stage.** Only ~40% of *sparse* points lie on the mask, so the natural
+expectation is a dense cloud dominated by table and room. Measured, it is not:
+the plain white backdrop is too featureless to densify, and `fused.ply` is
+almost entirely mask (105,545 points). Do not write a background crop sized for
+a problem this capture does not have. What does need removing is 1.2% flyers
+(statistical outlier removal) and 5.3% detached tabletop fragments near the base
+(`mesh.keep_largest_cluster`) — the latter must run *before* Poisson, because
+afterwards the skirt and the mask are one connected component and
+`clean_mesh`'s largest-component filter can no longer separate them.
+Do **not** crop by colour saturation: the desaturated points are the painted
+eyes, teeth and decorative lines, not background.
+
 **Reprojection error does not indicate success.** It stayed at 0.955 ± 0.015 px
 across all five runs above — including the 5/49 collapse. It measures the images
 that registered, not whether reconstruction worked. Always quote it alongside
@@ -162,5 +187,12 @@ it that way in the paper; do not claim BA was disabled.
 - Rendering must stay headless: use `open3d.t.geometry.RaycastingScene`, never
   the Filament `OffscreenRenderer`, which is unreliable on macOS.
 - Figures go through `report.py` at IEEE column width, saved as PDF **and** PNG.
+- Stage previews are diagnostics, not paper figures. `previews.py` renders each
+  stage from the *same* evenly-spaced registered cameras into
+  `data/runs/<run_id>/figures/stages/`, beside the photograph from that pose,
+  and stacks them into `pipeline_progression.jpg`. The fixed viewpoints are the
+  point — renders from arbitrary angles cannot be compared across stages. A
+  preview must never fail its stage: call it via `write_stage_preview`, which
+  swallows exceptions.
 - `data/` is gitignored and never committed — it holds images, clouds and meshes.
   Everything in it is reproducible from a capture set plus a config.
