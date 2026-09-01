@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from khon_recon.cli import base_parser, resolve
 from khon_recon.io_utils import get_logger, update_manifest, write_json
 from khon_recon.sfm import run_sfm
+from khon_recon.previews import write_stage_preview
 
 log = get_logger("sfm")
 
@@ -40,6 +41,7 @@ def main() -> int:
             "and the mask previews if masking is on.",
             registered, total,
         )
+    write_stage_preview(cfg, "sfm")
     log.info("stage 1 complete -- next: python scripts/02_dense_export.py")
     return 0
 

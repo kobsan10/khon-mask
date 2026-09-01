@@ -109,6 +109,7 @@ khon_recon/           importable package -- all logic
   compare.py          masked PSNR/SSIM, render vs photograph
   specularity.py      does gilding actually break MVS?
   ablations.py        reduced overlap, minimal BA, no masks
+  previews.py         per-stage renders from fixed viewpoints, for comparison
   report.py           figures + LaTeX tables at IEEE column width
 scripts/              numbered CLI stages, 00 -> 08
 configs/              default.yaml, sample.yaml

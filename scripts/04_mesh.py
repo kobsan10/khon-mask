@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from khon_recon.cli import base_parser, resolve
 from khon_recon.io_utils import get_logger, update_manifest, write_json
 from khon_recon.mesh import run_meshing
+from khon_recon.previews import write_stage_preview
 
 log = get_logger("mesh")
 
@@ -41,6 +42,7 @@ def main() -> int:
             "open mouth) that the cameras could not see into",
             holes,
         )
+    write_stage_preview(cfg, "mesh")
     log.info("stage 4 complete -- next: python scripts/05_texture.py")
     return 0
 

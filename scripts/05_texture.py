@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from khon_recon.cli import base_parser, resolve
 from khon_recon.io_utils import get_logger, update_manifest, write_json
 from khon_recon.texture import run_texturing
+from khon_recon.previews import write_stage_preview
 
 log = get_logger("texture")
 
@@ -35,6 +36,7 @@ def main() -> int:
             "have no real colour. Add viewpoints covering them.",
             100 * unseen,
         )
+    write_stage_preview(cfg, "texture")
     log.info("stage 5 complete -- next: python scripts/06_evaluate.py")
     return 0
 
