@@ -205,11 +205,17 @@ def _poisson_isolated(pcd, depth: int, scale: float, attempts: int):
     """Run Poisson in a child process, retrying when it aborts.
 
     Open3D 0.19's bundled PoissonRecon intermittently fails iso-surface
-    extraction with ``Failed to close loop`` and calls abort(). Measured on
-    this cloud it fired on roughly a quarter to a third of runs, whether or
-    not normals had been reoriented. abort() cannot be caught in-process, so
-    the call is isolated in a child and retried; otherwise the stage would
-    fail at random on a pipeline whose results have to be reproducible.
+    extraction with ``Failed to close loop``. Measured on this cloud it fired
+    on roughly a quarter to a third of runs, whether or not normals had been
+    reoriented, so the call is isolated in a child and retried; otherwise the
+    stage would fail at random on a pipeline whose results have to be
+    reproducible.
+
+    The failure is worth describing precisely, because the obvious check misses
+    it: PoissonRecon prints the message and *terminates the process with status
+    zero*, having written nothing. It never returns to Python, so it cannot be
+    caught in-process; and the exit code says success, so the only reliable
+    test is whether the child actually produced its output file.
 
     Two measured facts to stop the obvious "fixes":
 
@@ -225,6 +231,7 @@ def _poisson_isolated(pcd, depth: int, scale: float, attempts: int):
     the pipeline actually reports -- outward normal fraction, hole count --
     are stable across runs.
     """
+    import os
     import subprocess
     import sys
     import tempfile
@@ -242,7 +249,9 @@ def _poisson_isolated(pcd, depth: int, scale: float, attempts: int):
                 text=True,
                 errors="replace",
             )
-            if result.returncode == 0:
+            # An abort() shows up as a non-zero return, but the child can also
+            # exit cleanly having written nothing. Both are failed attempts.
+            if result.returncode == 0 and os.path.exists(dst):
                 data = np.load(dst)
                 mesh = o3d.geometry.TriangleMesh(
                     o3d.utility.Vector3dVector(data["vertices"]),
@@ -250,11 +259,14 @@ def _poisson_isolated(pcd, depth: int, scale: float, attempts: int):
                 )
                 if attempt > 1:
                     log.info("Poisson succeeded on attempt %d", attempt)
+                os.remove(dst)
                 return mesh, data["densities"], attempt
+
+            tail = result.stderr.strip().splitlines()
             log.warning(
-                "Poisson aborted (attempt %d/%d): %s",
-                attempt, attempts,
-                result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "no output",
+                "Poisson attempt %d/%d failed (exit %d, output written: %s): %s",
+                attempt, attempts, result.returncode, os.path.exists(dst),
+                tail[-1] if tail else "no stderr",
             )
 
     raise RuntimeError(

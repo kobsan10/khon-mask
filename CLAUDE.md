@@ -108,9 +108,12 @@ bit-identical reruns. Full analysis in `data/repeatability_study.json`.
 
 **Open3D's Poisson crashes at random, and `n_threads` makes it worse.**
 Open3D 0.19's bundled PoissonRecon aborts with `Failed to close loop` on
-roughly a quarter to a third of runs on the `sample` dense cloud. It is an
-`abort()`, not an exception, so it cannot be caught in-process — `mesh.py`
-isolates the call in a child process and retries (`mesh.poisson_max_attempts`).
+roughly a quarter to a third of runs on the `sample` dense cloud. It terminates
+the process — never returning to Python, so it cannot be caught in-process —
+but **exits with status zero** having written nothing, so a return-code check
+sees success. `mesh.py` isolates the call in a child process and retries
+(`mesh.poisson_max_attempts`), testing for the child's *output file* rather
+than its exit code.
 Do **not** try to stabilise it with the `n_threads` argument: it looks like the
 knob `sfm.mapper_num_threads` turned out to be, but passing it at all — 1, 2, 4,
 16, or even its documented default of `-1` — crashed 100% of runs, against ~25%
