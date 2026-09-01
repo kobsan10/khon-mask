@@ -9,8 +9,9 @@ to fix now and expensive to discover three stages later.
 > Before the shoot, use [CAPTURE_GUIDE.md](CAPTURE_GUIDE.md) instead. This file
 > assumes the photographs already exist.
 
-**Rough timings** for 60–100 photos on this Mac, extrapolated from a 25-image
-test — treat as estimates, not promises.
+**Timings below are measured** on the real `sample` capture (49 photographs,
+Apple Silicon), not extrapolated. A larger set scales roughly with image count,
+except exhaustive matching which scales with its square.
 
 ---
 
@@ -115,9 +116,15 @@ registered 84/84 images, 61234 3D points, mean reprojection error 0.412 px
 
 > ⚠️ **Run it twice before believing it.** Reprojection error alone does not
 > indicate success — it stayed at 0.955 px even on a run that registered just
-> 5 of 49 images. With `sfm.mapper_num_threads=1` (already set) two runs must
-> agree exactly. If they differ, determinism has broken and no number below is
-> trustworthy.
+> 5 of 49 images.
+>
+> Two runs agree *exactly* only when they reuse the same `database.db`. A fresh
+> feature extraction genuinely varies: four identical runs on `sample`
+> registered **35, 36, 40 and 45** of 49 (CV 11.7%) with 2387–2940 points
+> (`data/runs/extraction_variance.json`). So one low number is not proof of
+> failure — but it does mean **never quote a single registration count without
+> the spread**, and **read ablations against their own `full` control** rather
+> than against this run.
 
 Re-mapping is cheap: delete `sparse/` and `sfm_stats.json` but keep
 `database.db`, and stage 1 reuses the features — ~25 s instead of ~15 min.
@@ -144,6 +151,19 @@ python scripts/02_dense_export.py -c configs/sample.yaml
 Produces `data/runs/sample/dense_bundle_sample.zip`. Dense stereo needs CUDA
 and **cannot run on this Mac** — this is expected, not an error.
 
+> 💡 **The default `dense.max_image_size: 1600` throws away most of your
+> resolution.** The `sample` photographs are 4032 and 5712 px tall, so dense
+> stereo saw about a third of what was captured, and returned 105,545 points.
+> Raising it is the cheapest quality improvement available — no reshoot, one
+> Colab run:
+>
+> ```bash
+> python scripts/02_dense_export.py -c configs/sample.yaml -s dense.max_image_size=3200
+> ```
+>
+> Patch-match cost scales with pixel count, so budget roughly 4x the Colab time
+> and use the Google Drive upload route for the larger bundle.
+
 ---
 
 ## Step 4 — Dense reconstruction on Colab (20–60 min)
@@ -166,7 +186,7 @@ self-contained, so nothing is lost.
 
 ---
 
-## Step 5 — Bring the dense cloud back (2 min)
+## Step 5 — Bring the dense cloud back (~5 s)
 
 ```bash
 python scripts/03_dense_import.py ~/Downloads/fused.ply -c configs/sample.yaml
@@ -182,7 +202,7 @@ alignment check** — every later stage would be built on the wrong geometry.
 
 ---
 
-## Step 6 — Surface reconstruction (5–20 min)
+## Step 6 — Surface reconstruction (~10 s)
 
 ```bash
 python scripts/04_mesh.py -c configs/sample.yaml
@@ -193,14 +213,46 @@ python scripts/04_mesh.py -c configs/sample.yaml
 Two lines matter:
 
 ```text
-92.8% of mesh normals face the observing cameras
-mesh: 412034 vertices, 821553 triangles, 3 hole(s), watertight=False
+kept 98738/104267 points in the largest of 54 clusters (5.3% removed as detached fragments)
+98.5% of mesh normals face the observing cameras
+mesh: 255925 vertices, 506860 triangles, 55 hole(s), watertight=False
 ```
 
 - **Outward normals must be > 50%.** Below that the mesh is inside-out and
-  texturing will colour almost nothing.
-- A few holes are normal and expected in the eye sockets and mouth. Dozens of
-  holes means the dense cloud is too thin.
+  texturing will colour almost nothing. The measured run gives 98.5%.
+- The cluster line is `mesh.keep_largest_cluster` dropping table fragments
+  before Poisson can weld them to the mask. ~5% is normal; if it removes more
+  than 25% the stage stops rather than silently meshing a fragment.
+- **Holes are not automatically a problem.** On `sample`, 55 holes were verified
+  genuine rather than trim artefacts — see below.
+
+> **If Poisson logs `Poisson attempt N/8 failed`, ignore it.** Open3D 0.19's
+> PoissonRecon fails on ~25–33% of runs and, confusingly, exits with status
+> *zero* having written nothing. The stage isolates it in a child process and
+> retries; only "aborted on all 8 attempts" is a real failure.
+
+### Are the holes real, or is the trim cutting real surface?
+
+Measured on `sample` (`data/runs/sample/mesh_sweep.json`). Mesh vertices further
+than 3x the dense cloud's median point spacing from any observed point are
+surface Poisson *invented*:
+
+| depth | trim | vertices | holes | invented |
+| --- | --- | --- | --- | --- |
+| 9 | 2% | 131,118 | 2 | 12.9% |
+| 9 | 6% | 125,754 | 8 | 9.1% |
+| 10 | 2% | 268,867 | 20 | 5.4% |
+| **10** | **6%** | **255,925** | **55** | **1.8%** |
+| 11 | 6% | 285,766 | 68 | 1.4% |
+
+Read the last two columns together: raising the trim from 2% to 6% **triples the
+hole count while cutting invented surface from 5.4% to 1.8%.** The extra holes
+are fabricated geometry being removed, not detail being lost. Depth 9 is wrong
+for a cloud this size — its coarse octree bridges gaps that were never observed.
+
+`configs/sample.yaml` already uses depth 10 / trim 6%. Depth 11 is marginally
+cleaner but pushes a 2^11 octree onto 98k points; prefer it only after a denser
+cloud from a higher `dense.max_image_size`.
 
 Tuning, in order of usefulness:
 
@@ -208,26 +260,46 @@ Tuning, in order of usefulness:
 | --- | --- |
 | Mesh looks lumpy / crown detail lost | `-s mesh.poisson_depth=11` |
 | Mesh is noisy and spiky | `-s mesh.poisson_depth=9` |
-| Smooth "balloons" over eye sockets | `-s mesh.density_trim_quantile=0.06` |
-| Holes too aggressive | `-s mesh.density_trim_quantile=0.01` |
+| Smooth "balloons" over eye sockets | raise `-s mesh.density_trim_quantile` |
+| Genuinely too many holes | lower it — but check `invented` first |
 
-Inspect it before moving on. macOS has no built-in `.ply` viewer, so use MeshLab
-(<https://www.meshlab.net>), or view it from Python:
+Inspect it before moving on. macOS has no built-in `.ply` viewer:
 
 ```bash
-python -c "import open3d as o3d; o3d.visualization.draw_geometries([o3d.io.read_triangle_mesh('data/runs/sample/mesh/mesh.ply')])"
+brew install --cask meshlab
+open -a /Applications/MeshLab2025.07.app data/runs/sample/mesh/mesh_upright.ply
+```
+
+> ⚠️ **Open the `_upright` copy, not the canonical mesh.** COLMAP's world frame
+> has +Y pointing *down*, so a viewer opens `mesh.ply` upside down and facing
+> away — which looks like a failed reconstruction and is not one. Stages 4 and 5
+> also write `mesh_upright.ply` / `mesh_textured_upright.ply`, rotated Y-up and
+> centred using the camera poses. The canonical files must stay in the
+> reconstruction frame because stage 6 renders from the estimated poses.
+>
+> If MeshLab shows grey instead of gold, set **Render → Color → Per Vertex** —
+> the colour is per-vertex, not a texture image. If `open -a MeshLab` reports
+> "Unable to find application", use the full path above.
+
+Or from Python, with no install:
+
+```bash
+python -c "import open3d as o3d; o3d.visualization.draw_geometries([o3d.io.read_triangle_mesh('data/runs/sample/mesh/mesh_upright.ply')])"
 ```
 
 ---
 
-## Step 7 — Texture (10–30 min)
+## Step 7 — Texture (~15 s)
 
 ```bash
 python scripts/05_texture.py -c configs/sample.yaml
 ```
 
-`configs/sample.yaml` sets `texture.mode: uv`, producing
-`mesh/mesh_textured.obj` plus a texture map — the deliverable model.
+`configs/sample.yaml` sets `texture.mode: vertex`, producing
+`mesh/mesh_textured.ply` with per-vertex colour plus an upright viewing copy.
+Switch to `-s texture.mode=uv` for a real texture atlas once the geometry is
+settled — that is the better deliverable model, but vertex colour always works
+and is fine for the report's renders.
 
 ### ✅ Checkpoint 7
 
@@ -241,7 +313,7 @@ works and is fine for the report's renders.
 
 ---
 
-## Step 8 — Evaluation (10–30 min)
+## Step 8 — Evaluation (~35 s)
 
 ```bash
 python scripts/06_evaluate.py -c configs/sample.yaml
@@ -272,7 +344,7 @@ If it is slow, `--skip-views` postpones the render comparison.
 
 ---
 
-## Step 9 — Ablations (30–90 min)
+## Step 9 — Ablations (~11 min)
 
 ```bash
 python scripts/07_ablations.py -c configs/sample.yaml
@@ -287,7 +359,7 @@ Investigate rather than reporting it at face value.
 
 ---
 
-## Step 10 — Figures and tables (2 min)
+## Step 10 — Figures and tables (~5 s)
 
 ```bash
 python scripts/08_report.py -c configs/sample.yaml --all-runs
@@ -310,14 +382,18 @@ Figures are already at IEEE column width, as PDF for LaTeX and PNG for viewing.
 
 - [ ] QC ran and every warning is either fixed or written down as a limitation
 - [ ] Mask previews inspected by eye
-- [ ] ≥90% of images registered, reprojection error < 1 px
+- [ ] Registration checked over **two or more runs**, and the spread — not a
+      single number — is what goes in the paper
 - [ ] Dense/sparse alignment check passed
 - [ ] Outward normal fraction > 0.5
-- [ ] Textured mesh opens and looks like the mask
+- [ ] Holes checked against `mesh_sweep.json` before being called genuine
+- [ ] `_upright` mesh opens the right way up and looks like the mask
+- [ ] Stage previews reviewed: `figures/stages/pipeline_progression.jpg`
 - [ ] `evaluation.json` saved; numbers copied into the paper
-- [ ] Ablations run; the table makes sense
+- [ ] Ablations run, and read against their own `full` control
 - [ ] Figures regenerated
-- [ ] `data/runs/sample/` backed up — it holds every number in the paper
+- [ ] `data/runs/<id>/`, `data/raw/<subject>/` and the variance studies backed up
+      **off this disk** — `data/` is gitignored, so none of it is on GitHub
 
 ---
 
@@ -332,6 +408,13 @@ python scripts/04_mesh.py -c configs/sample.yaml -s mesh.poisson_depth=11
 
 # what was actually run, with versions and timings
 cat data/runs/sample/manifest.json
+
+# rebuild every stage preview without re-running any stage
+python -c "
+from khon_recon.cli import base_parser, resolve; import sys
+from khon_recon import previews
+sys.argv=['x','-c','configs/sample.yaml']
+print(previews.refresh(resolve(base_parser('p').parse_args())))"
 
 # start over completely
 rm -rf data/runs/sample

@@ -154,6 +154,22 @@ afterwards the skirt and the mask are one connected component and
 Do **not** crop by colour saturation: the desaturated points are the painted
 eyes, teeth and decorative lines, not background.
 
+**The mesh is written twice, and only one copy may be moved.** COLMAP's world
+frame inherits the camera convention, so **+Y points down**: every viewer opens
+`mesh.ply` upside down and facing away, which reads as a failed reconstruction
+and is not one. Stages 4 and 5 also write `*_upright.ply`, rotated Y-up and
+centred via `mesh.upright_transform` (recovered from the camera poses, not the
+geometry). Never rotate the canonical mesh to "fix" the viewer: stage 6
+ray-casts it from the estimated poses, and moving it out of the reconstruction
+frame silently invalidates every novel-view metric.
+
+**Dense MVS defaults to a third of the captured resolution.**
+`dense.max_image_size: 1600` against source images 4032 and 5712 px tall. That
+is the main reason `sample`'s dense cloud is only 105,545 points. Raising it
+needs no reshoot, just another Colab run, and is the cheapest quality
+improvement available — but it will not close the 216° azimuth gap, which no
+processing can.
+
 **Reprojection error does not indicate success.** It stayed at 0.955 ± 0.015 px
 across all five runs above — including the 5/49 collapse. It measures the images
 that registered, not whether reconstruction worked. Always quote it alongside
