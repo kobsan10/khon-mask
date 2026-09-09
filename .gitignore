@@ -26,3 +26,10 @@ __pycache__/
 
 # Word lock/temp files (created while a .docx is open)
 ~$*
+
+# Not published: working notes and source docs kept for personal reference
+CLAUDE.md
+RUNBOOK.md
+.claude/
+docs/ENGINEERING_NOTES.md
+*.docx
