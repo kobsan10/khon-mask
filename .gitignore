@@ -1,20 +1,10 @@
-# Reconstruction data: photographs, point clouds, meshes and run outputs are
-# large and are never committed. Everything under data/ is either your capture
-# set or reproducible from it plus a config, which is the point of the
-# run-directory layout.
-#
-# Note: COLMAP feature databases and fused point clouds routinely exceed
-# GitHub's 100 MB per-file hard limit (data/runs/sample/database.db is 154 MB),
-# so tracking run outputs would break `git push` anyway.
-#
-# Because the photographs are NOT in git, keep a backup of data/raw/ somewhere
-# else -- they are the one input that cannot be regenerated.
+# photos, point clouds, meshes, run outputs -- regenerated from the capture + config
 data/
 
-# Colab hand-off bundles
+# colab hand-off bundles
 *.zip
 
-# Python
+# python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -24,12 +14,9 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Word lock/temp files (created while a .docx is open)
+# word lock files
 ~$*
 
-# Not published: working notes and source docs kept for personal reference
+# personal notes 
 CLAUDE.md
-RUNBOOK.md
 .claude/
-docs/ENGINEERING_NOTES.md
-*.docx
