@@ -1,0 +1,60 @@
+# Reshoot: gilded Khon mask, walk-around capture (not a turntable), iPhone 17,
+# 2026-09-15. 199 photos after removing 19 that show the mask mid-damage
+# (a chip in the crown visible only in IMG_2555-2573, confirmed against
+# surrounding frames in the same session -- see conversation history, not a
+# processing artifact). Originals converted from HEIC to JPEG with sips;
+# EXIF (Model, FocalLength, Orientation) verified intact.
+#
+#   python scripts/00_prepare_images.py -c configs/full_capture.yaml --input data/raw/full_capture/originals
+#   python scripts/01_sfm.py            -c configs/full_capture.yaml
+
+extends: default.yaml
+
+name: full_capture
+
+paths:
+  subject: full_capture
+  run_id: full_capture
+
+sfm:
+  # Confirmed via EXIF (Model=iPhone 17, FocalLength=5.96mm) across the whole
+  # session -- one lens throughout, unlike the two-lens `sample` capture.
+  single_camera: true
+  # Same determinism fix that `sample` needed: without these, identical reruns
+  # registered anywhere from 5 to 46 of 49 images. See CLAUDE.md.
+  multiple_models: true
+  mapper_num_threads: 1
+  # The gilded surface starves SIFT of features; ask for more of them, as
+  # `sample` did.
+  max_num_features: 16000
+  matcher: exhaustive
+
+prepare:
+  # Downscale for tractable CPU SfM. Raise once the pipeline is confirmed
+  # working on this set.
+  max_dim: 1600
+
+mask:
+  # Walk-around capture, camera moving around a stationary mask (confirmed by
+  # eye: background genuinely changes between frames -- different windows,
+  # different wall angles, a from-below shot catching the ceiling). Masking
+  # hurt `sample` badly for the same reason it would hurt here: this subject's
+  # gilded surface has almost no matchable texture of its own, so the
+  # background is what SfM leans on. Re-evaluate only if capture QC flags a
+  # static background.
+  enabled: false
+
+mesh:
+  # Unlike `sample`'s plain white backdrop (too featureless to densify), this
+  # capture's real room -- windows, walls, floor -- has plenty of texture, so
+  # MVS densified a lot of it: the largest non-mask cluster is 34% of the
+  # cloud (the red pedestal stand plus wall/window edges), well past the 25%
+  # default. Verified by eye before raising this, not assumed: projected the
+  # two largest clusters and confirmed the kept one (43%) is unmistakably the
+  # mask -- crown, spike and head are visible in the point shape -- while the
+  # discarded one is the stand and background edges, not mask fragments.
+  cluster_max_removed_fraction: 0.65
+
+texture:
+  mode: vertex
+  blend: median  # rejects specular glitter highlights on the gilding

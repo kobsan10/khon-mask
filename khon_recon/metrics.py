@@ -214,8 +214,19 @@ def camera_coverage(reconstruction: pycolmap.Reconstruction) -> dict[str, Any]:
 
     rel = centers - origin
     radius = np.linalg.norm(rel, axis=1)
-    azimuth = np.degrees(np.arctan2(rel[:, 1], rel[:, 0]))
-    elevation = np.degrees(np.arcsin(np.clip(rel[:, 2] / np.maximum(radius, 1e-9), -1, 1)))
+
+    # Decompose in the reconstruction's actual up/right/front frame, not raw
+    # world Z. COLMAP's world inherits the camera convention (+Y points down,
+    # see mesh.upright_transform), so treating raw Z as "up" measures the
+    # wrong angle -- verified against this project's own sample run, where it
+    # overstated elevation span by 3x (58.8 deg vs the true ~19 deg) and
+    # silently suppressed the "elevation span too low" warning below.
+    from .mesh import upright_transform
+
+    frame = upright_transform(reconstruction)
+    right, up, front = frame[0, :3], frame[1, :3], frame[2, :3]
+    azimuth = np.degrees(np.arctan2(rel @ front, rel @ right))
+    elevation = np.degrees(np.arcsin(np.clip((rel @ up) / np.maximum(radius, 1e-9), -1, 1)))
 
     ordered = np.sort(np.mod(azimuth, 360.0))
     gaps = np.diff(np.concatenate([ordered, ordered[:1] + 360.0]))

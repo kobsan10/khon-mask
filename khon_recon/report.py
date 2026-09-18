@@ -172,7 +172,11 @@ def figure_ablation(rows: list[dict[str, Any]], out_dir: Path) -> list[Path]:
     specs = [
         ("registered_images", "registered images", "#3b6ea5"),
         ("mean_reprojection_error_px", "mean reproj. error (px)", "#c1442e"),
-        ("holdout_psnr", "held-out PSNR (dB)", "#4c8055"),
+        # Not holdout_psnr: ablations only run stage 1 (SfM), never mesh or
+        # render, so no ablation row ever has a PSNR to plot. Azimuth gap is
+        # the field every ablation actually produces, and it's the one the
+        # reduced-overlap variants are designed to move.
+        ("largest_azimuth_gap_deg", "largest azimuth gap (deg)", "#4c8055"),
     ]
     for ax, (key, title, color) in zip(axes, specs):
         values = [r.get(key, np.nan) for r in rows]
@@ -298,10 +302,51 @@ def build_report(run_dir: Path, figures_dir: Path | None = None) -> dict[str, An
                 str(p) for p in figure_specularity(evaluation["specularity"], figures_dir)
             ]
 
+    all_ablation_rows = load("ablations.json")
+    ablation_rows = None
+    if all_ablation_rows:
+        # bundle_adjustment_isolation() appends a row with an entirely
+        # different schema (eq1_before_px, not registered_images) -- exclude
+        # it the same way scripts/07_ablations.py already does, or its NaN
+        # bars/blank cells pollute the comparison.
+        ablation_rows = [
+            r for r in all_ablation_rows
+            if not r.get("failed") and "registered_images" in r
+        ]
+    if ablation_rows:
+        produced["figures"] += [
+            str(p) for p in figure_ablation(ablation_rows, figures_dir)
+        ]
+
     tables_dir = run_dir / "tables"
     tables_dir.mkdir(parents=True, exist_ok=True)
     (tables_dir / "pipeline_stages.tex").write_text(pipeline_stage_table())
     produced["tables"].append(str(tables_dir / "pipeline_stages.tex"))
+
+    if ablation_rows:
+        # The CSV keeps every row, ba_isolation included, since write_csv
+        # unions keys and tolerates the mismatched schema; only the LaTeX
+        # table and figure need the filtered set.
+        write_csv(all_ablation_rows, tables_dir / "ablations.csv")
+        (tables_dir / "ablations.tex").write_text(
+            latex_table(
+                ablation_rows,
+                [
+                    ("run", "Variant"),
+                    ("registered_images", "Reg. images"),
+                    ("registration_rate", "Reg. rate"),
+                    ("mean_reprojection_error_px", "Eq. (1) error (px)"),
+                    ("largest_azimuth_gap_deg", "Azimuth gap (deg)"),
+                ],
+                caption="Ablation comparison. Each variant builds its own "
+                "database from scratch, so registration counts are not "
+                "comparable to the main run -- only to each other.",
+                label="ablations",
+            )
+        )
+        produced["tables"] += [
+            str(tables_dir / "ablations.csv"), str(tables_dir / "ablations.tex")
+        ]
 
     if evaluation:
         summary_rows = [_summary_row(run_dir.name, evaluation)]
